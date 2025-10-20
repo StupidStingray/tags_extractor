@@ -1,5 +1,5 @@
-# test test
 #%% imports
+import tempfile
 import fitz
 import shutil
 import openpyxl
@@ -10,8 +10,11 @@ from datetime import datetime
 import pytz
 import psycopg2
 from psycopg2 import Error
+from fastapi import FastAPI, File, UploadFile
 
 #%% function definition
+
+app = FastAPI()
 
 def append_with_pandas(file_path, sheet_name, new_df):
     """
@@ -204,7 +207,7 @@ def insert_or_update_document_revision(connection, doc_id, new_revision):
 excel_file_path = "CLDT.xlsx"
 cldt_sheet_name = "Sheet1"
 
-EQDB_file_path = "EQDB.xlsx"
+#EQDB_file_path = "EQDB.xlsx"
 eqdb_sheet_name = "NFE1-ME-20829-A-PO-F-001"
 
 vdl_file_path = "VDL for CLDT.xlsm"
@@ -216,7 +219,7 @@ vdl_sheet_name = "Forecast List"
 #%% connect to DB
 
 DB_HOST = "localhost"
-DB_NAME = "heru4"
+DB_NAME = "heru4_staging"
 DB_USER = "python_service"
 DB_PASSWORD = "08082018"
 DB_PORT = "5432"
@@ -254,38 +257,43 @@ CREATE TABLE IF NOT EXISTS errors (
 #doc.save("output.pdf", garbage=4, deflate=True, clean=True)
 
 #%% EQDB export to Postgres
-workbook = openpyxl.load_workbook(EQDB_file_path,data_only=True)
-sheet = workbook[eqdb_sheet_name]
+@app.post("/update_eqdb/")
+async def update_eqdb(file: UploadFile = File(...)):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        tmp.write(await file.read())
+        EQDB_file_path = tmp.name
+    workbook = openpyxl.load_workbook(EQDB_file_path,data_only=True)
+    sheet = workbook[eqdb_sheet_name]
 
-eqdb_tags = set([cell[0].value for cell in sheet.iter_rows(11,sheet.max_row,2,2)])
-eqdb_tags.remove(None)
+    eqdb_tags = set([cell[0].value for cell in sheet.iter_rows(11,sheet.max_row,2,2)])
+    eqdb_tags.remove(None)
 
-try:
+    try:
     # Establish the connection
-    connection = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
-    )
-    
-    # Cursor allows us to execute SQL commands
-    cursor = connection.cursor()
-    print("PostgreSQL database connection successful.")
-    
-    create_or_overwrite_eqdb(connection, "eqdb", "tag", eqdb_tags)
-    
-except (Exception, Error) as error:
-    # Catch connection and query errors
-    print(f"Error while connecting to PostgreSQL or executing query: {error}")
+        connection = psycopg2.connect(
+                user=DB_USER,
+                password=DB_PASSWORD,
+                host=DB_HOST,
+                port=DB_PORT,
+                database=DB_NAME
+                )
 
-finally:
+    # Cursor allows us to execute SQL commands
+        cursor = connection.cursor()
+        print("PostgreSQL database connection successful.")
+
+        create_or_overwrite_eqdb(connection, "eqdb", "tag", eqdb_tags)
+
+    except (Exception, Error) as error:
+    # Catch connection and query errors
+        print(f"Error while connecting to PostgreSQL or executing query: {error}")
+
+    finally:
     # This block always executes, ensuring the connection is closed
-    if connection:
-        cursor.close()
-        connection.close()
-        print("\nPostgreSQL connection closed.")
+        if connection:
+            cursor.close()
+            connection.close()
+            print("\nPostgreSQL connection closed.")
 
 #%% EQDB import from Postgres
 
