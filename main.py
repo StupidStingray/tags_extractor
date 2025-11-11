@@ -1,5 +1,4 @@
 #%% imports
-import tempfile
 import fitz
 import shutil
 import openpyxl
@@ -10,11 +9,6 @@ from datetime import datetime
 import pytz
 import psycopg2
 from psycopg2 import Error
-from fastapi import FastAPI, File, UploadFile
-
-#%% function definition
-
-app = FastAPI()
 
 def append_with_pandas(file_path, sheet_name, new_df):
     """
@@ -63,6 +57,7 @@ def append_with_pandas(file_path, sheet_name, new_df):
         print(f"\nError: Sheet '{sheet_name}' not found in workbook.")
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")
+
 
 def decompose_tag(tag):
     if tag[:3] == "68-":
@@ -207,7 +202,7 @@ def insert_or_update_document_revision(connection, doc_id, new_revision):
 excel_file_path = "CLDT.xlsx"
 cldt_sheet_name = "Sheet1"
 
-#EQDB_file_path = "EQDB.xlsx"
+EQDB_file_path = "EQDB.xlsx"
 eqdb_sheet_name = "NFE1-ME-20829-A-PO-F-001"
 
 vdl_file_path = "VDL for CLDT.xlsm"
@@ -216,10 +211,10 @@ vdl_sheet_name = "Forecast List"
 
 
 
-#%% connect to DB
+#%% connect_to_DB
 
 DB_HOST = "localhost"
-DB_NAME = "heru4_staging"
+DB_NAME = "heru4"
 DB_USER = "python_service"
 DB_PASSWORD = "08082018"
 DB_PORT = "5432"
@@ -256,46 +251,41 @@ CREATE TABLE IF NOT EXISTS errors (
 ### OUTPUT
 #doc.save("output.pdf", garbage=4, deflate=True, clean=True)
 
-#%% EQDB export to Postgres
-@app.post("/update_eqdb/")
-async def update_eqdb(file: UploadFile = File(...)):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-        tmp.write(await file.read())
-        EQDB_file_path = tmp.name
-    workbook = openpyxl.load_workbook(EQDB_file_path,data_only=True)
-    sheet = workbook[eqdb_sheet_name]
+#%% EQDB_export_to_Postgres
+workbook = openpyxl.load_workbook(EQDB_file_path,data_only=True)
+sheet = workbook[eqdb_sheet_name]
 
-    eqdb_tags = set([cell[0].value for cell in sheet.iter_rows(11,sheet.max_row,2,2)])
-    eqdb_tags.remove(None)
+eqdb_tags = set([cell[0].value for cell in sheet.iter_rows(11,sheet.max_row,2,2)])
+eqdb_tags.remove(None)
 
-    try:
+try:
     # Establish the connection
-        connection = psycopg2.connect(
-                user=DB_USER,
-                password=DB_PASSWORD,
-                host=DB_HOST,
-                port=DB_PORT,
-                database=DB_NAME
-                )
-
+    connection = psycopg2.connect(
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME
+    )
+    
     # Cursor allows us to execute SQL commands
-        cursor = connection.cursor()
-        print("PostgreSQL database connection successful.")
-
-        create_or_overwrite_eqdb(connection, "eqdb", "tag", eqdb_tags)
-
-    except (Exception, Error) as error:
+    cursor = connection.cursor()
+    print("PostgreSQL database connection successful.")
+    
+    create_or_overwrite_eqdb(connection, "eqdb", "tag", eqdb_tags)
+    
+except (Exception, Error) as error:
     # Catch connection and query errors
-        print(f"Error while connecting to PostgreSQL or executing query: {error}")
+    print(f"Error while connecting to PostgreSQL or executing query: {error}")
 
-    finally:
+finally:
     # This block always executes, ensuring the connection is closed
-        if connection:
-            cursor.close()
-            connection.close()
-            print("\nPostgreSQL connection closed.")
+    if connection:
+        cursor.close()
+        connection.close()
+        print("\nPostgreSQL connection closed.")
 
-#%% EQDB import from Postgres
+#%% EQDB_import
 
 try:
     # Establish the connection
@@ -325,12 +315,10 @@ eqdb_decomposed = set([decompose_tag(tag) for tag in eqdb_tags])
 # --- 2. SQL Commands ---
 # Example: Create a new table
 
-#%%
-#%% documents register
+#%% file_treatment
 doc_reg = {}
 document_revisions = {}
 
-#%% file treatment
 directory = "documents/"
 all_entries = os.listdir(directory)
     
@@ -354,6 +342,12 @@ try:
     cursor.execute(SQL_CREATE_CLDT_TABLE)
     cursor.execute(SQL_CREATE_ERRORS_TABLE)
     connection.commit()
+
+    workbook = openpyxl.load_workbook("CLDT.xlsx",data_only=True)
+    sheet = workbook["CLDT"]
+
+    imported_cldt = list(sheet.iter_rows(7,sheet.max_row,2,6, values_only=True))
+    imported_cldt = [row for row in imported_cldt if decompose_tag(row[4]) in eqdb_decomposed]
     for file_name in only_files:
         file_path = os.path.join(directory,file_name)
         pdf_file = fitz.open(file_path)
@@ -419,6 +413,8 @@ try:
                             tags_found.add(eqdb_dict[instrum_tag_decomposed])
                             list_suspect.append([document_number, document_revisions[document_number], page_num,  instrum_word , eqdb_dict[instrum_tag_decomposed]])                                   
             page_num += 1
+        tags_namrata = [row[4] for row in imported_cldt if row[0] == document_number]
+        tags_found.update(tags_namrata)
         cldt_list = [[document_number, "000", document_revisions[document_number],"Tag",item] for item in tags_found]
         SQL_INSERT_CLDT = """
         INSERT INTO cldt (doc_id, doc_part, revision_number, link_level, tag)
@@ -433,19 +429,23 @@ try:
         connection.commit()
         
         doc_reg[document_number] = tags_found
-    
-    
-    
-    # #%% convert doc register to list
-    # cldt_list = []
-    # for key in doc_reg.keys():
-    #     for item in doc_reg[key]:
-    #         cldt_list.append(["",key,"000",document_revisions[key],"Tag",item])
-            
-    # cldt_df = pd.DataFrame(cldt_list,columns = ["","Document","Level","revision","idk","Tag"])
-    
-    # list_suspect_df = pd.DataFrame(list_suspect,columns = ["document number","revision","page number", "wrong tag", "to be replaced with..."])
 
+    treated_files = get_set_from_db(connection,
+                                    "document_versions",
+                                    "doc_id")
+    cldt_list = []
+    for i in range(len(imported_cldt)):
+        doc_num = imported_cldt[i][0] 
+        if (doc_num not in treated_files):
+            if (doc_num != imported_cldt[i-1][0]):
+                update = insert_or_update_document_revision(connection, doc_num, imported_cldt[i][2])
+            cldt_list.append(imported_cldt[i])
+
+    SQL_INSERT_CLDT = """
+    INSERT INTO cldt (doc_id, doc_part, revision_number, link_level, tag)
+    VALUES (%s, %s, %s, %s, %s);"""
+    cursor.executemany(SQL_INSERT_CLDT, cldt_list)
+    connection.commit()
 
 except (Exception, Error) as error:
     # Catch connection and query errors
@@ -457,23 +457,39 @@ finally:
         cursor.close()
         connection.close()
         print("\nPostgreSQL connection closed.")
-#%% copy existing CLDT to old
+#%% check_remaining
 
-current_time = datetime.now(pytz.timezone('Europe/Paris')).strftime("%Y-%m-%d_%H_%M_%S")
-shutil.copy2(excel_file_path,os.path.join('old/',"cldt_"+current_time+".xlsx"))
-#%% CLDT append
+connection = None
+try:
+    connection = psycopg2.connect(
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME
+    )
+    print("Database connection successful.")
 
-append_with_pandas(excel_file_path, cldt_sheet_name, cldt_df)
-list_suspect_df.to_excel("tag_errors_in_docs.xlsx", sheet_name="errors",index=False)
-# cldt_wb = openpyxl.load_workbook(excel_file_path, data_only = True)
-# sheet = cldt_wb[cldt_sheet_name]
-# for row in cldt_list:
-#     sheet.append(row)
-# cldt_wb.save("cldt_output.xlsx")
-#%% export to xlsx
+    workbook = openpyxl.load_workbook("VDL for CLDT.xlsm",data_only=True)
+    sheet = workbook["Forecast List"]
 
+    total_docs = set([cell[0] for cell in sheet.iter_rows(6,sheet.max_row,2,2, values_only=True)])
+    
+    files_complete_list = pd.read_sql(f"SELECT * FROM document_versions;",
+                                      connection).values.tolist()
+    treated_docs = set([row[0] for row in files_complete_list])
+    diff = total_docs - treated_docs
+    df = pd.DataFrame(list(diff))
+    df.to_excel("not_treated.xlsx", index=False)
+except (Exception, Error) as error:
+    print(f"Error while exported the list of untreated files: {error}")
+finally:
+    if connection:
+        cursor.close()
+        connection.close()
+        print("\nPostgreSQL connection closed.")
 
-
+#%% export_tables
 
 def export_table_to_excel(table_name, output_file):
     """
@@ -521,9 +537,49 @@ for table in TABLES_TO_EXPORT:
     OUTPUT_EXCEL_FILE = f"{table}_export_{timestamp}.xlsx"
     export_table_to_excel(table, OUTPUT_EXCEL_FILE)
 
-#%%delete tables
+#%% export_untreated_files
 
-tables_to_delete = []
+connection = None
+
+try:
+    # Connect to the database
+    connection = psycopg2.connect(
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME
+    )
+    print("Database connection successful.")
+
+    # Construct the SQL query
+    
+    # Use pandas.read_sql to execute the query and load results directly into a DataFrame
+    cldt_complete_list = pd.read_sql(f"SELECT * FROM cldt;",
+                                     connection).values.tolist()
+    files_complete_list = pd.read_sql(f"SELECT * FROM document_versions;",
+                                      connection).values.tolist()
+    documents_w_tags = set([row[1] for row in cldt_complete_list])
+    treated_docs = set([row[0] for row in files_complete_list])
+    docs_wo_tags = []
+    for doc in treated_docs:
+        if doc not in documents_w_tags:
+            docs_wo_tags.append(doc)
+    df_docs_wo_tags = pd.DataFrame(docs_wo_tags)
+    df_docs_wo_tags.to_excel("docs_no_tags.xlsx", index = False)
+
+except (Exception, Error) as error:
+    print(f"Error while exporting table: {error}")
+    
+finally:
+        # Close the database connection
+        if connection:
+            connection.close()
+            print("PostgreSQL connection closed.")
+
+#%% delete_tables
+
+tables_to_delete = ["cldt", "errors", "document_versions"]
 connection = None
 try:
     # Connect to the database
@@ -552,8 +608,4 @@ finally:
         connection.close()
         print("\nPostgreSQL connection closed.")    
     
-#%%
-
-
-
 
