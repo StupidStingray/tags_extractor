@@ -6,7 +6,7 @@ tables_to_delete = ["cldt", "errors", "document_versions"]
 
 
 excel_file_path = "CLDT.xlsx"
-cldt_sheet_name = "Sheet1"
+cldt_sheet_name = "CLDT"
 
 EQDB_file_path = "EQDB.xlsx"
 eqdb_sheet_name = "NFE1-ME-20829-A-PO-F-001"
