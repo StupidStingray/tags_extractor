@@ -1,5 +1,6 @@
-# test test
 #%% imports
+import config
+import sql_commands as sql
 import fitz
 import shutil
 import openpyxl
@@ -10,8 +11,6 @@ from datetime import datetime
 import pytz
 import psycopg2
 from psycopg2 import Error
-
-#%% function definition
 
 def append_with_pandas(file_path, sheet_name, new_df):
     """
@@ -61,11 +60,12 @@ def append_with_pandas(file_path, sheet_name, new_df):
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")
 
+
 def decompose_tag(tag):
-    if tag[:3] == "68-":
-        start_pos=3
+    if tag[:len(config.TAG_SYSTEM_PREFIX) + 1] == config.TAG_SYSTEM_PREFIX + "-":
+        start_pos=len(config.TAG_SYSTEM_PREFIX) + 1
     else:
-        start_pos=2
+        start_pos=len(config.TAG_SYSTEM_PREFIX) 
     pos_1 = tag.find("1")
     equip_cat=tag[start_pos:pos_1].replace("-","")
     unit = tag[pos_1:pos_1+2]
@@ -156,40 +156,9 @@ def insert_or_update_document_revision(connection, doc_id, new_revision):
     Returns True if the row was updated/inserted, False otherwise.
     """
     # SQL uses the ON CONFLICT clause targeting the PRIMARY KEY (doc_id)
-    SQL_UPSERT_REVISION = """
-    INSERT INTO document_versions (doc_id, revision_number)
-    VALUES (%s, %s)
-    ON CONFLICT (doc_id) 
-    DO UPDATE SET 
-        revision_number = EXCLUDED.revision_number 
-    WHERE 
-        -- --- Conditional Logic for Alphanumeric Comparison ---
-        CASE 
-            -- RULE 1: If CURRENT is Alpha AND NEW is Numeric, ALWAYS UPDATE (Numeric > Alpha)
-            WHEN document_versions.revision_number ~ '^[A-Za-z]+$' AND EXCLUDED.revision_number ~ '^[0-9]+$' 
-                THEN TRUE
-
-            -- RULE 2: If CURRENT and NEW are BOTH Alpha (Compare alphabetically/lexicographically)
-            WHEN document_versions.revision_number ~ '^[A-Za-z]+$' AND EXCLUDED.revision_number ~ '^[A-Za-z]+$' 
-                THEN document_versions.revision_number < EXCLUDED.revision_number
-                
-            -- RULE 3: If CURRENT and NEW are BOTH Numeric (Compare numerically for correct natural sort: 2 < 10)
-            -- We must safely cast to INTEGER for comparison.
-            WHEN document_versions.revision_number ~ '^[0-9]+$' AND EXCLUDED.revision_number ~ '^[0-9]+$' 
-                THEN document_versions.revision_number::INTEGER < EXCLUDED.revision_number::INTEGER
-            
-            -- RULE 4: If CURRENT is Numeric AND NEW is Alpha, NEVER UPDATE (Alpha < Numeric, so the existing numeric is higher)
-            WHEN document_versions.revision_number ~ '^[0-9]+$' AND EXCLUDED.revision_number ~ '^[A-Za-z]+$' 
-                THEN FALSE
-
-            -- Default/Fallback: No update, or complex mixed alphanumeric strings not covered by above rules
-            ELSE FALSE
-        END;
-    """
-    
     try:
         with connection.cursor() as cursor:
-            cursor.execute(SQL_UPSERT_REVISION, (doc_id, new_revision))
+            cursor.execute(sql.SQL_UPSERT_REVISION, (doc_id, new_revision))
             connection.commit()
             
             # Use rowcount to determine if any row was affected (inserted OR updated)
@@ -200,162 +169,47 @@ def insert_or_update_document_revision(connection, doc_id, new_revision):
         connection.rollback()
         return False
     
-    
-excel_file_path = "CLDT.xlsx"
-cldt_sheet_name = "Sheet1"
-
-EQDB_file_path = "EQDB.xlsx"
-eqdb_sheet_name = "NFE1-ME-20829-A-PO-F-001"
-
-vdl_file_path = "VDL for CLDT.xlsm"
-vdl_sheet_name = "Forecast List"
-
-
-
-
-#%% connect to DB
-
-DB_HOST = "localhost"
-DB_NAME = "heru4"
-DB_USER = "python_service"
-DB_PASSWORD = "08082018"
-DB_PORT = "5432"
-
-SQL_CREATE_DOC_TABLE = """
-CREATE TABLE IF NOT EXISTS document_versions (
-    doc_id VARCHAR(25) PRIMARY KEY,
-    revision_number VARCHAR(2) NOT NULL
-);
-"""
-
-SQL_CREATE_CLDT_TABLE = """
-CREATE TABLE IF NOT EXISTS cldt (
-    id SERIAL PRIMARY KEY,
-    doc_id VARCHAR(25) NOT NULL,
-    doc_part VARCHAR(3) NOT NULL,
-    revision_number VARCHAR(2) NOT NULL,
-    link_level VARCHAR(15) NOT NULL,
-    tag VARCHAR(40) NOT NULL
-);
-"""
-
-SQL_CREATE_ERRORS_TABLE = """
-CREATE TABLE IF NOT EXISTS errors (
-    id SERIAL PRIMARY KEY,
-    doc_id VARCHAR(25) NOT NULL,
-    revision_number VARCHAR(2) NOT NULL,
-    page INTEGER NOT NULL,
-    wrong_tag VARCHAR(40) NOT NULL,
-    right_tag VARCHAR(40) NOT NULL
-);
-"""
-
 ### OUTPUT
 #doc.save("output.pdf", garbage=4, deflate=True, clean=True)
 
-#%% EQDB export to Postgres
-workbook = openpyxl.load_workbook(EQDB_file_path,data_only=True)
-sheet = workbook[eqdb_sheet_name]
-
-eqdb_tags = set([cell[0].value for cell in sheet.iter_rows(11,sheet.max_row,2,2)])
-eqdb_tags.remove(None)
-
-try:
-    # Establish the connection
-    connection = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
-    )
-    
-    # Cursor allows us to execute SQL commands
-    cursor = connection.cursor()
-    print("PostgreSQL database connection successful.")
-    
+def eqdb_export_to_Postgres(connection):
+    workbook = openpyxl.load_workbook(config.EQDB_file_path,data_only=True)
+    sheet = workbook[config.eqdb_sheet_name]
+    eqdb_tags = set([cell[0].value for cell in sheet.iter_rows(11,sheet.max_row,2,2)])
+    eqdb_tags.remove(None)
     create_or_overwrite_eqdb(connection, "eqdb", "tag", eqdb_tags)
-    
-except (Exception, Error) as error:
-    # Catch connection and query errors
-    print(f"Error while connecting to PostgreSQL or executing query: {error}")
-
-finally:
-    # This block always executes, ensuring the connection is closed
-    if connection:
-        cursor.close()
-        connection.close()
-        print("\nPostgreSQL connection closed.")
-
-#%% EQDB import from Postgres
-
-try:
-    # Establish the connection
-    connection = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
-    )
-    cursor = connection.cursor()
+        
+def eqdb_import(connection):
+    global eqdb_tags, eqdb_dict, eqdb_decomposed
     eqdb_tags = get_set_from_db(connection, "eqdb", "tag")
-except (Exception, Error) as error:
-    # Catch connection and query errors
-    print(f"Error while connecting to PostgreSQL or executing query: {error}")
+    eqdb_dict = {decompose_tag(tag) : tag for tag in eqdb_tags}
+    eqdb_decomposed = set([decompose_tag(tag) for tag in eqdb_tags])
 
-finally:
-    # This block always executes, ensuring the connection is closed
-    if connection:
-        cursor.close()
-        connection.close()
-        print("\nPostgreSQL connection closed.")
-        
-        
-eqdb_dict = {decompose_tag(tag) : tag for tag in eqdb_tags}
-eqdb_decomposed = set([decompose_tag(tag) for tag in eqdb_tags])
-# --- 2. SQL Commands ---
-# Example: Create a new table
-
-#%%
-#%% documents register
-doc_reg = {}
-document_revisions = {}
-
-#%% file treatment
-directory = "documents/"
-all_entries = os.listdir(directory)
-    
-    # Filter the list to include only actual files
-only_files = [
-        entry for entry in all_entries 
-        if os.path.isfile(os.path.join(directory, entry))
-    ]
-
-try:
-    # Establish the connection
-    connection = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
-    )
-    cursor = connection.cursor()
-    cursor.execute(SQL_CREATE_DOC_TABLE)
-    cursor.execute(SQL_CREATE_CLDT_TABLE)
-    cursor.execute(SQL_CREATE_ERRORS_TABLE)
+def file_treatment(connection, cursor):
+    doc_reg = {}
+    document_revisions = {}
+    all_entries = os.listdir(config.directory)
+        # Filter the list to include only actual files
+    only_files = [
+            entry for entry in all_entries 
+            if os.path.isfile(os.path.join(config.directory, entry))
+        ]
+    cursor.execute(sql.SQL_CREATE_DOC_TABLE)
+    cursor.execute(sql.SQL_CREATE_CLDT_TABLE)
+    cursor.execute(sql.SQL_CREATE_ERRORS_TABLE)
     connection.commit()
+    workbook = openpyxl.load_workbook(config.excel_file_path,data_only=True)
+    sheet = workbook[config.cldt_sheet_name]
+    imported_cldt = list(sheet.iter_rows(7,sheet.max_row,2,6, values_only=True))
+    imported_cldt = [row for row in imported_cldt if decompose_tag(row[4]) in eqdb_decomposed]
     for file_name in only_files:
-        file_path = os.path.join(directory,file_name)
+        file_path = os.path.join(config.directory,file_name)
         pdf_file = fitz.open(file_path)
-        
         content_of_title_page = pdf_file[0].get_text("words",sort=False)
         doc_number_found = False
         revision_found = False
         for word in content_of_title_page:
-            
-            if ("3945_" in word[4]) and (len(word[4])==22):
+            if (config.FILE_NUMBER_START in word[4]) and (len(word[4])==22):
                 document_number = word[4]
                 doc_number_found = True
             elif word[4]=="REV":
@@ -375,11 +229,8 @@ try:
         if not(treat_document):
             continue
         #% tags extraction
-        
-        SQL_DELETE_PREVIOUS_TAGS = "DELETE FROM cldt WHERE doc_id = %s;"
-        cursor.execute(SQL_DELETE_PREVIOUS_TAGS, (document_number,))
+        cursor.execute(sql.SQL_DELETE_PREVIOUS_TAGS, (document_number,))
         connection.commit()
-        
         tags_found = set()
         list_suspect = []
         page_num = 1
@@ -395,7 +246,7 @@ try:
                     elif word_decomposed in eqdb_decomposed:
                         tags_found.add(eqdb_dict[word_decomposed])
                         list_suspect.append([document_number, document_revisions[document_number], page_num,  word[4] , eqdb_dict[word_decomposed]])
-                    elif (len(word[4]) in {4, 5, 6}) and (word[4][:2]=="68"):
+                    elif (len(word[4]) in {4, 5, 6}) and (word[4][:2]==config.TAG_SYSTEM_PREFIX):
                         if page.rotation_matrix == matrix:
                             ending_coord = [word[0]-5,word[3],word[2]+5,2*word[3]-word[1]]                    
                         else:
@@ -411,141 +262,155 @@ try:
                             tags_found.add(eqdb_dict[instrum_tag_decomposed])
                             list_suspect.append([document_number, document_revisions[document_number], page_num,  instrum_word , eqdb_dict[instrum_tag_decomposed]])                                   
             page_num += 1
+        tags_namrata = [row[4] for row in imported_cldt if row[0] == document_number]
+        tags_found.update(tags_namrata)
         cldt_list = [[document_number, "000", document_revisions[document_number],"Tag",item] for item in tags_found]
-        SQL_INSERT_CLDT = """
-        INSERT INTO cldt (doc_id, doc_part, revision_number, link_level, tag)
-        VALUES (%s, %s, %s, %s, %s);"""
-        cursor.executemany(SQL_INSERT_CLDT, cldt_list)
+        cursor.executemany(sql.SQL_INSERT_CLDT, cldt_list)
         connection.commit()
-        
-        SQL_INSERT_ERRORS = """
-        INSERT INTO errors (doc_id, revision_number, page, wrong_tag, right_tag)
-        VALUES (%s, %s, %s, %s, %s);"""
-        cursor.executemany(SQL_INSERT_ERRORS, list_suspect)
+        cursor.executemany(sql.SQL_INSERT_ERRORS, list_suspect)
         connection.commit()
-        
         doc_reg[document_number] = tags_found
-    
-    
-    
-    # #%% convert doc register to list
-    # cldt_list = []
-    # for key in doc_reg.keys():
-    #     for item in doc_reg[key]:
-    #         cldt_list.append(["",key,"000",document_revisions[key],"Tag",item])
-            
-    # cldt_df = pd.DataFrame(cldt_list,columns = ["","Document","Level","revision","idk","Tag"])
-    
-    # list_suspect_df = pd.DataFrame(list_suspect,columns = ["document number","revision","page number", "wrong tag", "to be replaced with..."])
+    treated_files = get_set_from_db(connection,
+                                    "document_versions",
+                                    "doc_id")
+    cldt_list = []
+    for i in range(len(imported_cldt)):
+        doc_num = imported_cldt[i][0] 
+        if (doc_num not in treated_files):
+            if (doc_num != imported_cldt[i-1][0]):
+                update = insert_or_update_document_revision(connection, doc_num, imported_cldt[i][2])
+            cldt_list.append(imported_cldt[i])
+    cursor.executemany(sql.SQL_INSERT_CLDT, cldt_list)
+    connection.commit()
 
+def check_remaining(connection):
 
-except (Exception, Error) as error:
-    # Catch connection and query errors
-    print(f"Error while connecting to PostgreSQL or executing query: {error}")
-
-finally:
-    # This block always executes, ensuring the connection is closed
-    if connection:
-        cursor.close()
-        connection.close()
-        print("\nPostgreSQL connection closed.")
-#%% copy existing CLDT to old
-
-current_time = datetime.now(pytz.timezone('Europe/Paris')).strftime("%Y-%m-%d_%H_%M_%S")
-shutil.copy2(excel_file_path,os.path.join('old/',"cldt_"+current_time+".xlsx"))
-#%% CLDT append
-
-append_with_pandas(excel_file_path, cldt_sheet_name, cldt_df)
-list_suspect_df.to_excel("tag_errors_in_docs.xlsx", sheet_name="errors",index=False)
-# cldt_wb = openpyxl.load_workbook(excel_file_path, data_only = True)
-# sheet = cldt_wb[cldt_sheet_name]
-# for row in cldt_list:
-#     sheet.append(row)
-# cldt_wb.save("cldt_output.xlsx")
-#%% export to xlsx
+    workbook = openpyxl.load_workbook(config.vdl_file_path,data_only=True)
+    sheet = workbook[config.vdl_sheet_name]
+    total_docs = set([cell[0] for cell in sheet.iter_rows(6,sheet.max_row,2,2, values_only=True)])
+    files_complete_list = pd.read_sql(f"SELECT * FROM document_versions;",connection).values.tolist()
+    treated_docs = set([row[0] for row in files_complete_list])
+    diff = total_docs - treated_docs
+    df = pd.DataFrame(list(diff))
+    df.to_excel("not_treated.xlsx", index=False)
 
 
 
-
-def export_table_to_excel(table_name, output_file):
+def export_table_to_excel(connection, table_name, output_file):
     """
     Connects to PostgreSQL, fetches an entire table into a DataFrame,
     and saves it to an Excel file.
     """
-    connection = None
-    try:
-        # Connect to the database
-        connection = psycopg2.connect(
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT,
-            database=DB_NAME
-        )
-        print("Database connection successful.")
+    # Construct the SQL query
+    sql_query = f"SELECT * FROM {table_name};"
+    # Use pandas.read_sql to execute the query and load results directly into a DataFrame
+    df = pd.read_sql(sql_query, connection)
+    # Save the DataFrame to an Excel file
+    # index=False prevents writing the DataFrame's numerical index to the file
+    df.to_excel(output_file, index=False)
+    print(f"\nSuccessfully exported table '{table_name}' to '{output_file}'.")
 
-        # Construct the SQL query
-        sql_query = f"SELECT * FROM {table_name};"
-        
-        # Use pandas.read_sql to execute the query and load results directly into a DataFrame
-        df = pd.read_sql(sql_query, connection)
-        
-        # Save the DataFrame to an Excel file
-        # index=False prevents writing the DataFrame's numerical index to the file
-        df.to_excel(output_file, index=False)
-        
-        print(f"\nSuccessfully exported table '{table_name}' to '{output_file}'.")
+def export_tables(connection):
+    TABLES_TO_EXPORT = ["cldt", "errors", "document_versions"]
+    timestamp = datetime.now(pytz.timezone('Europe/Paris')).strftime("%Y-%m-%d_%H_%M_%S")
+    for table in TABLES_TO_EXPORT:
+        OUTPUT_EXCEL_FILE = f"{table}_export_{timestamp}.xlsx"
+        export_table_to_excel(connection, table, OUTPUT_EXCEL_FILE)
 
-    except (Exception, Error) as error:
-        print(f"Error while exporting table: {error}")
-    
-    finally:
-        # Close the database connection
-        if connection:
-            connection.close()
-            print("PostgreSQL connection closed.")
+def export_untreated_files(connection):
+    # Use pandas.read_sql to execute the query and load results directly into a DataFrame
+    cldt_complete_list = pd.read_sql(f"SELECT * FROM cldt;",
+                                     connection).values.tolist()
+    files_complete_list = pd.read_sql(f"SELECT * FROM document_versions;",
+                                      connection).values.tolist()
+    documents_w_tags = set([row[1] for row in cldt_complete_list])
+    treated_docs = set([row[0] for row in files_complete_list])
+    docs_wo_tags = []
+    for doc in treated_docs:
+        if doc not in documents_w_tags:
+            docs_wo_tags.append(doc)
+    df_docs_wo_tags = pd.DataFrame(docs_wo_tags)
+    df_docs_wo_tags.to_excel("docs_no_tags.xlsx", index = False)
 
-TABLES_TO_EXPORT = ["cldt", "errors", "document_versions"]
 
-timestamp = datetime.now(pytz.timezone('Europe/Paris')).strftime("%Y-%m-%d_%H_%M_%S")
+def delete_tables(connection, cursor):
 
-for table in TABLES_TO_EXPORT:
-    OUTPUT_EXCEL_FILE = f"{table}_export_{timestamp}.xlsx"
-    export_table_to_excel(table, OUTPUT_EXCEL_FILE)
-
-#%%delete tables
-
-tables_to_delete = []
-connection = None
-try:
-    # Connect to the database
-    connection = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
-    )
-    cursor = connection.cursor()
-    print("Database connection successful.")
-    for table_name in tables_to_delete:
+    for table_name in config.tables_to_delete:
         SQL_DROP = f"DROP TABLE IF EXISTS {table_name} CASCADE;"
         cursor.execute(SQL_DROP)    
         connection.commit()
         print("%s deleted successfuly;" % (table_name,))
-except (Exception, Error) as error:
-    # Catch connection and query errors
-    print(f"Error while connecting to PostgreSQL or executing query: {error}")
 
-finally:
-    # This block always executes, ensuring the connection is closed
-    if connection:
-        cursor.close()
-        connection.close()
-        print("\nPostgreSQL connection closed.")    
+def main():
+    """
+    Main pipeline controller: orchestrates the entire tag extraction workflow.
     
-#%%
+    Steps:
+    1. Connect to database
+    2. Optionally export EQDB to Postgres (if BOOL_EXPORT_EQDB is True)
+    3. Optionally delete existing tables (if BOOL_DELETE_TABLES is True)
+    4. Import EQDB tags from database
+    5. Process PDF files and extract tags
+    6. Check remaining untreated documents
+    7. Export results to Excel files
+    8. Export list of untreated files
+    
+    All database connections are properly managed and cleaned up in finally block.
+    """
+    connection = None
+    cursor = None
+    
+    try:
+        # Step 1: Connect to the database
+        connection = psycopg2.connect(
+            user=config.DB_USER,
+            password=config.DB_PASSWORD,
+            host=config.DB_HOST,
+            port=config.DB_PORT,
+            database=config.DB_NAME
+        )
+        cursor = connection.cursor()
+        print("Database connection successful.")
+        
+        # Step 2: Optionally export EQDB to Postgres
+        if config.BOOL_EXPORT_EQDB:
+            eqdb_export_to_Postgres(connection)
+        
+        # Step 3: Optionally delete existing tables (destructive operation)
+        if config.BOOL_DELETE_TABLES:
+            delete_tables(connection, cursor)
+        
+        # Step 4: Import EQDB tags from database
+        eqdb_import(connection)
+        
+        # Step 5: Process PDF files and extract tags
+        file_treatment(connection, cursor)
+        
+        # Step 6: Check remaining untreated documents
+        check_remaining(connection)
+        
+        # Step 7: Export results to Excel files
+        export_tables(connection)
+        
+        # Step 8: Export list of untreated files
+        export_untreated_files(connection)
+        
+        print("\n--- Pipeline execution complete ---")
+
+    except (Exception, Error) as error:
+        # Catch connection and query errors
+        print(f"Error while connecting to PostgreSQL or executing query: {error}")
+        # Re-raise to allow caller to handle if needed
+        raise
+
+    finally:
+        # This block always executes, ensuring the connection is closed
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
+            print("\nPostgreSQL connection closed.")
 
 
-
-
+if __name__ == "__main__":
+    main()    
