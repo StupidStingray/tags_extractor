@@ -61,7 +61,7 @@ def append_with_pandas(file_path, sheet_name, new_df):
         print(f"\nAn unexpected error occurred: {e}")
 
 
-def decompose_tag(tag):
+def decompose_tag(tag, tag_system_prefix):
     if tag[:len(config.TAG_SYSTEM_PREFIX) + 1] == config.TAG_SYSTEM_PREFIX + "-":
         start_pos=len(config.TAG_SYSTEM_PREFIX) + 1
     else:
@@ -182,8 +182,8 @@ def eqdb_export_to_Postgres(connection):
 def eqdb_import(connection):
     global eqdb_tags, eqdb_dict, eqdb_decomposed
     eqdb_tags = get_set_from_db(connection, "eqdb", "tag")
-    eqdb_dict = {decompose_tag(tag) : tag for tag in eqdb_tags}
-    eqdb_decomposed = set([decompose_tag(tag) for tag in eqdb_tags])
+    eqdb_dict = {decompose_tag(tag,config.TAG_SYSTEM_PREFIX) : tag for tag in eqdb_tags}
+    eqdb_decomposed = set([decompose_tag(tag,config.TAG_SYSTEM_PREFIX) for tag in eqdb_tags])
 
 def file_treatment(connection, cursor):
     doc_reg = {}
