@@ -61,7 +61,7 @@ def append_with_pandas(file_path, sheet_name, new_df):
         print(f"\nAn unexpected error occurred: {e}")
 
 
-def decompose_tag(tag, tag_system_prefix):
+def decompose_tag(tag):
     if tag[:len(config.TAG_SYSTEM_PREFIX) + 1] == config.TAG_SYSTEM_PREFIX + "-":
         start_pos=len(config.TAG_SYSTEM_PREFIX) + 1
     else:
@@ -185,6 +185,29 @@ def eqdb_import(connection):
     eqdb_dict = {decompose_tag(tag,config.TAG_SYSTEM_PREFIX) : tag for tag in eqdb_tags}
     eqdb_decomposed = set([decompose_tag(tag,config.TAG_SYSTEM_PREFIX) for tag in eqdb_tags])
 
+def doc_num_and_rev(content_of_title_page):
+    doc_number_found = False
+    revision_found = False
+    for word in content_of_title_page:
+        if (config.FILE_NUMBER_START in word[4]) and (len(word[4])==22):
+            document_number = word[4]
+            doc_number_found = True
+        elif word[4]=="REV":
+            rev_x_pos = word[0]
+            rev_y_pos = word[1]
+            received_y_pos = rev_y_pos - 200
+            revision_found = True
+            for word in content_of_title_page:
+                if (word[0]> rev_x_pos-10) and (word[0] < rev_x_pos +10):
+                    if (word[1]<rev_y_pos) and (word[1]>received_y_pos):
+                        rev_y_pos = word[1]
+                        doc_revision = word[4]
+            if not(doc_number_found and revision_found):
+                document_number = file_name[:22]
+                doc_revision = file_name[-8:-6]
+    return document_number, doc_revision
+
+
 def file_treatment(connection, cursor):
     doc_reg = {}
     document_revisions = {}
@@ -206,25 +229,8 @@ def file_treatment(connection, cursor):
         file_path = os.path.join(config.directory,file_name)
         pdf_file = fitz.open(file_path)
         content_of_title_page = pdf_file[0].get_text("words",sort=False)
-        doc_number_found = False
-        revision_found = False
-        for word in content_of_title_page:
-            if (config.FILE_NUMBER_START in word[4]) and (len(word[4])==22):
-                document_number = word[4]
-                doc_number_found = True
-            elif word[4]=="REV":
-                rev_x_pos = word[0]
-                rev_y_pos = word[1]
-                received_y_pos = rev_y_pos - 200
-                revision_found = True
-        for word in content_of_title_page:
-            if (word[0]> rev_x_pos-10) and (word[0] < rev_x_pos +10):
-                if (word[1]<rev_y_pos) and (word[1]>received_y_pos):
-                    rev_y_pos = word[1]
-                    document_revisions[document_number] = word[4]
-        if not(doc_number_found and revision_found):
-            document_number = file_name[:22]
-            document_revisions[document_number] = file_name[-8:-6]
+        document_number, document_revisions[document_number] = \
+                doc_num_and_rev(content_of_title_page)
         treat_document = insert_or_update_document_revision(connection, document_number, document_revisions[document_number])
         if not(treat_document):
             continue
