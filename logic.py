@@ -1,3 +1,6 @@
+import config
+import fitz
+import os
 
 def decompose_tag(tag, tag_system_prefix):
     if tag[:len(tag_system_prefix) + 1] == tag_system_prefix + "-":
@@ -17,7 +20,8 @@ def decompose_tag(tag, tag_system_prefix):
         suffix = tag[pos_1+4:].replace("-","")
     return (equip_cat, unit, tag_number, suffix)
     
-def file_treatment(connection, cursor):
+
+def file_treatment(connection, cursor, eqdb_decomposed):
     doc_reg = {}
     document_revisions = {}
     all_entries = os.listdir(config.directory)
@@ -33,7 +37,7 @@ def file_treatment(connection, cursor):
     workbook = openpyxl.load_workbook(config.excel_file_path,data_only=True)
     sheet = workbook[config.cldt_sheet_name]
     imported_cldt = list(sheet.iter_rows(7,sheet.max_row,2,6, values_only=True))
-    imported_cldt = [row for row in imported_cldt if logic.decompose_tag(row[4]) in eqdb_decomposed]
+    imported_cldt = [row for row in imported_cldt if decompose_tag(row[4]) in eqdb_decomposed]
     for file_name in only_files:
         file_path = os.path.join(config.directory,file_name)
         pdf_file = fitz.open(file_path)
