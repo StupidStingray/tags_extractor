@@ -1,9 +1,9 @@
 
-def decompose_tag(tag):
-    if tag[:len(config.TAG_SYSTEM_PREFIX) + 1] == config.TAG_SYSTEM_PREFIX + "-":
-        start_pos=len(config.TAG_SYSTEM_PREFIX) + 1
+def decompose_tag(tag, tag_system_prefix):
+    if tag[:len(tag_system_prefix) + 1] == tag_system_prefix + "-":
+        start_pos=len(tag_system_prefix) + 1
     else:
-        start_pos=len(config.TAG_SYSTEM_PREFIX) 
+        start_pos=len(tag_system_prefix) 
     pos_1 = tag.find("1")
     equip_cat=tag[start_pos:pos_1].replace("-","")
     unit = tag[pos_1:pos_1+2]
@@ -16,7 +16,7 @@ def decompose_tag(tag):
         tag_number = tag[pos_1+2:pos_1+4]
         suffix = tag[pos_1+4:].replace("-","")
     return (equip_cat, unit, tag_number, suffix)
-
+    
 def file_treatment(connection, cursor):
     doc_reg = {}
     document_revisions = {}

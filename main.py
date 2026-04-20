@@ -1,4 +1,5 @@
 #%% imports
+import logic
 import config
 import sql_commands as sql
 import fitz
@@ -61,24 +62,6 @@ def append_with_pandas(file_path, sheet_name, new_df):
         print(f"\nAn unexpected error occurred: {e}")
 
 
-def decompose_tag(tag, tag_system_prefix):
-    if tag[:len(config.TAG_SYSTEM_PREFIX) + 1] == config.TAG_SYSTEM_PREFIX + "-":
-        start_pos=len(config.TAG_SYSTEM_PREFIX) + 1
-    else:
-        start_pos=len(config.TAG_SYSTEM_PREFIX) 
-    pos_1 = tag.find("1")
-    equip_cat=tag[start_pos:pos_1].replace("-","")
-    unit = tag[pos_1:pos_1+2]
-    if len(tag[pos_1:].replace("-",""))>5:
-        package_letter = tag[pos_1+2]
-        tag_number = tag[pos_1+3:pos_1+6]
-        suffix = tag[pos_1+6:].replace("-","")
-    else:
-        package_letter = ""
-        tag_number = tag[pos_1+2:pos_1+4]
-        suffix = tag[pos_1+4:].replace("-","")
-    return (equip_cat, unit, tag_number, suffix)
-    
 def create_or_overwrite_eqdb(connection, table_name, column_name, data_set):
     """
     Checks if a table exists. If it exists, it drops and recreates it 
@@ -182,8 +165,8 @@ def eqdb_export_to_Postgres(connection):
 def eqdb_import(connection):
     global eqdb_tags, eqdb_dict, eqdb_decomposed
     eqdb_tags = get_set_from_db(connection, "eqdb", "tag")
-    eqdb_dict = {decompose_tag(tag,config.TAG_SYSTEM_PREFIX) : tag for tag in eqdb_tags}
-    eqdb_decomposed = set([decompose_tag(tag,config.TAG_SYSTEM_PREFIX) for tag in eqdb_tags])
+    eqdb_dict = {logic.decompose_tag(tag,config.TAG_SYSTEM_PREFIX) : tag for tag in eqdb_tags}
+    eqdb_decomposed = set([logic.decompose_tag(tag,config.TAG_SYSTEM_PREFIX) for tag in eqdb_tags])
 
 def file_treatment(connection, cursor):
     doc_reg = {}
@@ -201,7 +184,7 @@ def file_treatment(connection, cursor):
     workbook = openpyxl.load_workbook(config.excel_file_path,data_only=True)
     sheet = workbook[config.cldt_sheet_name]
     imported_cldt = list(sheet.iter_rows(7,sheet.max_row,2,6, values_only=True))
-    imported_cldt = [row for row in imported_cldt if decompose_tag(row[4]) in eqdb_decomposed]
+    imported_cldt = [row for row in imported_cldt if logic.decompose_tag(row[4],config.TAG_SYSTEM_PREFIX) in eqdb_decomposed]
     for file_name in only_files:
         file_path = os.path.join(config.directory,file_name)
         pdf_file = fitz.open(file_path)
@@ -240,7 +223,7 @@ def file_treatment(connection, cursor):
                 matrix = page.rotation_matrix
             for word in content_of_page:
                 if not(word[4] in tags_found):
-                    word_decomposed = decompose_tag(word[4])
+                    word_decomposed = logic.decompose_tag(word[4],config.TAG_SYSTEM_PREFIX)
                     if (word[4] in eqdb_tags):
                         tags_found.add(word[4])
                     elif word_decomposed in eqdb_decomposed:
@@ -255,7 +238,7 @@ def file_treatment(connection, cursor):
                         if ending[-2:]=="\n+":
                             ending = ending[:-2]
                         instrum_word = word[4]+ending
-                        instrum_tag_decomposed=decompose_tag(instrum_word)
+                        instrum_tag_decomposed=logic.decompose_tag(instrum_word,config.TAG_SYSTEM_PREFIX)
                         if instrum_word in eqdb_tags:
                             tags_found.add(instrum_word)
                         elif instrum_tag_decomposed in eqdb_decomposed:
