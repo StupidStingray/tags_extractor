@@ -1,13 +1,10 @@
 #%% imports
-import logic
 import config
 import sql_commands as sql
 import fitz
-import shutil
 import openpyxl
 import os
 import pandas as pd
-from io import BytesIO
 from datetime import datetime
 import pytz
 import psycopg2
@@ -130,8 +127,8 @@ def eqdb_export_to_Postgres(connection):
 def eqdb_import(connection):
     global eqdb_tags, eqdb_dict, eqdb_decomposed
     eqdb_tags = get_set_from_db(connection, "eqdb", "tag")
-    eqdb_dict = {logic.decompose_tag(tag,config.TAG_SYSTEM_PREFIX) : tag for tag in eqdb_tags}
-    eqdb_decomposed = set([logic.decompose_tag(tag,config.TAG_SYSTEM_PREFIX) for tag in eqdb_tags])
+    eqdb_dict = {decompose_tag(tag,config.TAG_SYSTEM_PREFIX) : tag for tag in eqdb_tags}
+    eqdb_decomposed = set([decompose_tag(tag,config.TAG_SYSTEM_PREFIX) for tag in eqdb_tags])
 
 def doc_num_and_rev(pdf_file, file_name):
     doc_number_found = False
@@ -171,7 +168,7 @@ def import_cldt(eqdb_decomposed):
     workbook = openpyxl.load_workbook(config.excel_file_path,data_only=True)
     sheet = workbook[config.cldt_sheet_name]
     imported_cldt = list(sheet.iter_rows(7,sheet.max_row,2,6, values_only=True))
-    imported_cldt = [row for row in imported_cldt if logic.decompose_tag(row[4],config.TAG_SYSTEM_PREFIX) in eqdb_decomposed]
+    imported_cldt = [row for row in imported_cldt if decompose_tag(row[4],config.TAG_SYSTEM_PREFIX) in eqdb_decomposed]
     return imported_cldt
 
 def analyze_file(pdf_file, document_number, doc_rev, eqdb_tags, eqdb_dict):
@@ -183,7 +180,7 @@ def analyze_file(pdf_file, document_number, doc_rev, eqdb_tags, eqdb_dict):
         content_of_page = page.get_text("words",sort=False)
         for word in content_of_page:
             if not(word[4] in tags_found):
-                word_decomposed = logic.decompose_tag(word[4],config.TAG_SYSTEM_PREFIX)
+                word_decomposed = decompose_tag(word[4],config.TAG_SYSTEM_PREFIX)
                 if (word[4] in eqdb_tags):
                     tags_found.add(word[4])
                 elif word_decomposed in eqdb_decomposed:
@@ -199,7 +196,7 @@ def analyze_file(pdf_file, document_number, doc_rev, eqdb_tags, eqdb_dict):
                     if ending[-2:]=="\n+":
                         ending = ending[:-2]
                     instrum_word = word[4]+ending
-                    instrum_tag_decomposed=logic.decompose_tag(instrum_word,config.TAG_SYSTEM_PREFIX)
+                    instrum_tag_decomposed=decompose_tag(instrum_word,config.TAG_SYSTEM_PREFIX)
                     if instrum_word in eqdb_tags:
                         tags_found.add(instrum_word)
                     elif instrum_tag_decomposed in eqdb_decomposed:
