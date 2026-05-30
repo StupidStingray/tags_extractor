@@ -14,6 +14,12 @@ from psycopg2 import Error
 from fastapi import FastAPI, File, UploadFile
 
 app = FastAPI()
+def code_time_test_function():
+    return "successfully tested code_time"
+def another_code_time_test_function():
+    return "successfullu testted code time another time"
+def wakatime_test():
+    return "at this point I test wakatime instead of code_time"
 
 def decompose_tag(tag):
     if tag[:3] == "68-":

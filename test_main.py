@@ -18,20 +18,20 @@ def mock_conn():
 
 @pytest.fixture
 def sample_eqdb_data():
-    return {"68-ME-1-123-A", "68-EE-1-456-B"}
+    return {"68-P1403", "68PRV14F040-A"}
 
 # --- Tests for decompose_tag ---
 
 def test_decompose_tag_with_prefix():
-    tag = "68-ME-1-123-A"
-    # Result should be ('ME', '1-', '12', '3A') based on main.py logic
+    tag = "68-QV140600"
+    # Result should be ('QV', '14', '600', '') based on main.py logic
     result = main.decompose_tag(tag)
-    assert result == ("ME", "1-", "12", "3A")
+    assert result == ("QV", "14", "600", "")
 
 def test_decompose_tag_without_dash_prefix():
-    tag = "68ME1-123-A"
+    tag = "68PRV14F040"
     result = main.decompose_tag(tag)
-    assert result == ("ME", "1-", "12", "3A")
+    assert result == ("PRV", "14", "040", "")
 
 # --- Tests for DB operations ---
 
@@ -77,7 +77,7 @@ def test_eqdb_export_to_Postgres(mock_load_wb, mock_conn):
     
     # Mock sheet.iter_rows
     mock_cell_1 = MagicMock()
-    mock_cell_1.value = "68-ME-1-123-A"
+    mock_cell_1.value = "68-P1403"
     mock_cell_2 = MagicMock()
     mock_cell_2.value = None
     mock_sheet.iter_rows.return_value = [[mock_cell_1], [mock_cell_2]]
@@ -90,12 +90,12 @@ def test_eqdb_export_to_Postgres(mock_load_wb, mock_conn):
 @patch("main.get_set_from_db")
 def test_eqdb_import(mock_get_set, mock_conn):
     conn, _ = mock_conn
-    mock_get_set.return_value = {"68-ME-1-123-A"}
+    mock_get_set.return_value = {"68-P1403"}
     
     main.eqdb_import(conn)
     
-    assert "68-ME-1-123-A" in main.eqdb_tags
-    assert (("ME", "1-", "12", "3A")) in main.eqdb_decomposed 
+    assert "68-P1403" in main.eqdb_tags
+    assert (("P", "14", "03", "")) in main.eqdb_decomposed 
 
 # --- Tests for PDF/File operations ---
 
